@@ -1,91 +1,166 @@
-# PIP-Net: Patch-Based Intuitive Prototypes for Interpretable Image Classification
-This repository presents the PyTorch code for PIP-Net (Patch-based Intuitive Prototypes Network). 
+# ProtoGestalt
 
-**Main Paper at CVPR**: ["PIP-Net: Patch-Based Intuitive Prototypes for Interpretable Image Classification"](https://openaccess.thecvf.com/content/CVPR2023/papers/Nauta_PIP-Net_Patch-Based_Intuitive_Prototypes_for_Interpretable_Image_Classification_CVPR_2023_paper.pdf) introduces PIP-Net for natural images.\
-**Medical applications, data quality inspection and manual corrections**: [Interpreting and Correcting Medical Image Classification with PIP-Net](https://link.springer.com/chapter/10.1007/978-3-031-50396-2_11), applies PIP-Net to X-rays and skin lesion images where biases can be fixed by (manually) disabling prototypes. \
-**Evaluation of part-prototype models like PIP-Net**: [The Co-12 Recipe for Evaluating Interpretable Part-Prototype Image Classifiers](https://arxiv.org/abs/2307.14517), presented at the [XAI World Conference](https://xaiworldconference.com/) in July 2023. 
+**Interpretable facial dysmorphology recognition with region-anchored part-prototypes.**
 
+ProtoGestalt extends [PIP-Net](https://github.com/M-Nauta/PIPNet) (Nauta *et al.*, CVPR 2023)
+to next-generation phenotyping on the [GestaltMatcher Database (GMDB)](https://db.gestaltmatcher.org/).
+It keeps PIP-Net's self-supervised, part-prototype design — an image is represented by *which
+learned facial-part prototypes are present* — and adds face-specific structure so the prototypes
+are anatomically meaningful and the model can be evaluated the way clinical phenotyping tools are.
 
-PIP-Net is an interpretable and intuitive deep learning method for image classification. PIP-Net learns prototypical parts: interpretable concepts visualized as image patches. PIP-Net classifies an image with a sparse scoring sheet where the presence of a prototypical part in an image adds evidence for a class. PIP-Net is globally interpretable since the set of learned prototypes shows the entire reasoning of the model. A smaller local explanation locates the relevant prototypes in a test image. The model can also abstain from a decision for out-of-distribution data by saying “I haven’t seen this before”. The model only uses image-level labels and does not rely on any part annotations. 
+<p align="center">
+  <img src="images/ProtoGestalt_method.png" width="900"><br>
+  <em><b>ProtoGestalt overview.</b> An input face is landmarked with MediaPipe Face Mesh
+  (478 points grouped into 10 facial regions) and encoded by a CNN backbone into an H×W grid of
+  P prototype-presence maps. Prototypes are pooled either globally (vanilla PIP-Net) or only
+  within their assigned facial region (region-masked pooling), and a sparse non-negative linear
+  layer scores them against the 275 GMDB syndromes to produce a per-syndrome prototype scoring
+  sheet. Training combines the alignment (L<sub>A</sub>), tanh (L<sub>T</sub>), and classification
+  (L<sub>C</sub>) losses. The same prototype representation supports both syndrome identification
+  and syndromic-vs-control screening.</em>
+</p>
 
-![Overview of PIP-Net](https://github.com/M-Nauta/PIPNet/blob/main/nauta_pipnet_cpvr.png)
+Key additions over vanilla PIP-Net:
 
-### Required Python Packages:
-* [PyTorch](https://pytorch.org/get-started/locally/) (incl torchvision, tested with PyTorch 1.13)
-* [tqdm](https://tqdm.github.io/)
-* scikit-learn
-* openCV (optional, used to generate heatmaps)
-* pandas
-* matplotlib
+- **Region-masked pooling** (`--masked_pool`): each prototype is confined to one MediaPipe
+  landmark region (eyes, brows, nose, mouth, cheeks, chin, forehead), so it can only contribute
+  from inside its facial region.
+- **Prototype-localization loss** (`--loc_loss`): a soft training penalty that anchors each
+  prototype's spatial activation inside its assigned region.
+- **Cross-dataset prototype pretraining** on CASIA-WebFace (`--pretrain_data_dir`).
+- **GestaltMatcher-protocol evaluation and interpretability tools** (see *Evaluation* below).
 
-### Training PIP-Net
-PIP-Net can be trained by running `main.py` with arguments. Run `main.py --help` to see all the argument options. Recommended parameters per dataset are present in the `used_arguments.txt` file (usually corresponds to the default options). 
+This repository is a research fork of PIP-Net; the core prototype learning lives in the
+`pipnet/` package and retains its original design and attribution.
 
-#### Training PIP-Net on your own data
-Want to train PIP-Net on another dataset? Add your dataset in ``util/data.py`` by creating a function ``get_yourdata`` with the desired data augmentation (that captures human perception of similarity), add it to the existing ``get_data`` function in ``util/data.py`` and give your dataset a name. Use ``--dataset your_dataset_name`` as argument to run PIP-Net on your dataset. 
+---
 
-Other relevant arguments are for example  ``--weighted_loss`` which is useful when your data is imbalanced. In case of a 2-class task with presence/absence reasoning, you could consider using ``--bias`` to include a traininable bias term in the linear classification layer (which could decrease the OoD abilities) such that PIP-Net does not necessarily need to find evidence for the absence-class.
+## Installation
 
-Check your `--log_dir` to keep track of the training progress. This directory contains `log_epoch_overview.csv` which prints statistics per epoch. File `tqdm.txt` prints updates per iteration and potential errors. File `out.txt` includes all print statements such as additional info. See the **Interpreting the Results** section for further details. 
-
-Visualizations of prototypes are included in your `--log_dir` / `--dir_for_saving_images`. 
-
-#### Trained checkpoints
-Various trained versions of PIP-Net are made available:
-
-- PIP-Net with the ConvNext backbone (recommended) trained on the birds CUB-200-2011 dataset is available [for download here](https://drive.google.com/file/d/1G8iiXgZ5gENYicwS8nLIg2Gf43A49kKm/view)  (320MB). Download the CUB dataset (see instructions in this README) and run the following command to generate the prototypes and evaluate the model: 
-``python3 main.py --dataset CUB-200-2011 --epochs_pretrain 0 --batch_size 64 --freeze_epochs 10 --epochs 0 --log_dir ./runs/pipnet_cub --state_dict_dir_net ./pipnet_cub_trained``. Update the path of ``--state_dict_dir_net`` to the checkpoint if needed.
-- PIP-Net with the ResNet50 backbone trained on the birds CUB-200-2011 dataset is available [for download here](https://drive.google.com/file/d/1zI1bcEXDsp8eN20msSiySo6UHD9y_bgw/view)  (280MB). Use ``--net resnet50``.
-- PIP-Net with the ConvNext backbone (recommended) trained on the CARS dataset is available [for download here](https://drive.google.com/file/d/1JQNbhzw6s7yJsd_3--hCAReGkbT9PRlP/view)  (320MB). Use ``--dataset CARS``.
-- PIP-Net with the ResNet50 backbone trained on the CARS dataset is available [for download here](https://drive.google.com/file/d/15t_nIjqR6m-dRFljqi-ntyv-gr4TIF7m/view)  (280MB).
-
-### Data
-The code can be applied to any imaging classification data set, structured according to the [Imagefolder format](https://pytorch.org/vision/stable/generated/torchvision.datasets.ImageFolder.html#torchvision.datasets.ImageFolder): 
-
->root/class1/xxx.png  <br /> root/class1/xxy.png  <br /> root/class2/xyy.png <br /> root/class2/yyy.png
-
-Add or update the paths to your dataset in ``util/data.py``. 
-
-For preparing [CUB-200-2011]([http://www.vision.caltech.edu/visipedia/CUB-200-2011.html](https://www.vision.caltech.edu/datasets/cub_200_2011/)) with 200 bird species, use `util/preprocess_cub.py`. For [Stanford Cars](https://ai.stanford.edu/~jkrause/cars/car_dataset.html) with 196 car types, use the [Instructions of ProtoTree](https://github.com/M-Nauta/ProtoTree/blob/main/README.md#preprocessing-cub).
-
-### Interpreting the Results
-During training, various files will be created in your ``--log_dir``:
-
-- **``log_epoch_overview.csv``** keeps track of the training progress per epoch. It contains accuracies, the number of prototypes, loss values etc. In case of a 2-class task, the third value is F1-score, otherwise this is top5-accuracy. 
-- **``out.txt``** collects the standard output from print statements. Its most relevant content is:
-    - More performance metrics are printed, such as sparsity ratio. In case of a 2-class task, it also shows the sensitivity, specificity, confusion matrix, etc.
-    - At the end of the file, after training, the relevant prototypes per class are printed. E.g., ``Class 0 has 5 relevant prototypes: [(prototype_id, class weight), ...]''. This information thus shows the learned scoring sheet of PIP-Net.
-- **``tqdm.txt``** contains the progress via progress bar package [tqdm](https://tqdm.github.io/). Useful to see how long one epoch will take, and how the losses evolve. Errors are also printed here.
-- **``metadata``** folder logs the provided arguments.
-- **``checkpoints``** folder contains state_dicts of the saved models. 
-- **Prototype visualisations** After training, various folders are created to visualise the learned reasoning of PIP-Net.
-    - ``visualised_pretrained_prototypes_topk`` visualises the top-10 most similar image patches per prototype after the pretraining phase. Each row in ``grid_topk_all`` corresponds to one prototype. The number corresponds with the index of the prototype node, starting at 0.
-    - ``visualised_prototypes_topk`` visualises the top-10 most similar image patches after the full (first and second stage) training. Prototypes that are not relevant to any class (all weights are zero) are excluded.
-    - ``visualised_prototypes`` is a more extensive visualisation of the prototypes learned after training PIP-Net. The ``grid_xxx.png`` images show all image patches that are similar to prototype with index ``xxx``. The number of image patches (or the size of the png file) already gives an indication how often this prototype is found in the training set. If you want to know where these image patches come from (to see some more context), you can open the corresponding folder ``prototype_xxx``. Each image contains a yellow square indicating where prototype ``xxx`` was found, coresponding with an image patch in ``grid_xxx.png``. The file name is ``pxxx_imageid_similarityscore_imagename_rect.png``.
-    - ``visualization_results`` (or other ``--dir_for_saving_images``) contains predictions including local explanations for test images. A subfolder corresponding to a test image contains the test image itself, and folders with predicted classes: ``classname_outputscore``. In such a class folder, it is visualised where which prototypes are detected: ``muliplicationofsimilarityandweight_prototypeindex_similarityscore_classweight_rect_or_patch.png``.
-
-### Hyperparameter FAQ
-* **What is the best number of epochs for my dataset?**
-The right number of epochs (`--epochs` and `--epochs_pretrain`) will depend on the data set size and difficulty of the classification task. Hence, tuning the parameters might require some trial-and-error. You can start with the default values. For datasets of different sizes, we recommend to set the number of epochs such that the number of iterations (i.e., weight updates) during the second training state is around 10,000 (rule of thumb). Hence, epochs = 10000 / (num_images_in_trainingset / batch_size). The number of iterations for one epoch is easily found in ``tqdm.txt``. Similarly, the number of pretraining epochs `--epochs_pretrain` can be set such that there are 2000 weight updates. 
-
-* **I have CUDA memory issues, what can I do?** PIP-Net is designed to fit onto one GPU. If your GPU has less CUDA memory, you have the following options: 1) reduce your batch size `--batch_size` or `--batch_size_pretrain`. Set it as large as possible to still fit in CUDA memory. 2) freeze more layers of the CNN backbone. Rather than optimizing the whole CNN backbone from `--freeze_epochs` onwards, you could keep the first layers frozen during the whole training process. Adapt the code around line 200 in `util/args.py` as indicated in the comments there. Alternatively, set `--freeze_epochs` equal to `--epochs`. 3) Use ``--net convnext_tiny_13`` instead of the default ``convnext_tiny_26`` to make training faster and more efficient. The potential downside is that the latent output grid is less fine-grained and could therefore impact prototype localization, but the impact will depend on your data and classification task.  
-
-### Reference and Citation
-Please refer to our work when using or discussing PIP-Net:
-
-```
-Meike Nauta, Jörg Schlötterer, Maurice van Keulen, Christin Seifert (2023). “PIP-Net: Patch-Based Intuitive Prototypes for Interpretable Image Classification.” IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR).
+```bash
+conda create -n protogestalt python=3.9
+conda activate protogestalt
+pip install torch torchvision numpy pandas scikit-learn matplotlib scipy pillow tqdm mediapipe
 ```
 
-BibTex citation:
+> **Paths.** Scripts default to the original author's directory layout (e.g.
+> `/data2/masino_lab/abamini/...`, `/home/abamini/GMDB_data/...`). Override them with the CLI
+> flags shown below (`--dataset`, `--model_dir`, `--freq_root`, `--meta_dir`, `--landmarks_dir`,
+> `--output_dir`, …) or edit the `DEFAULT_*` constants at the top of each script for your setup.
+
+## Data
+
+> **GMDB is a closed dataset.** It contains identifiable medical facial images of patients with
+> rare genetic disorders, so — for privacy and ethical reasons — it is not publicly downloadable.
+> Access is granted on request to the maintainers via the GestaltMatcher Database portal:
+> <https://db.gestaltmatcher.org/>. This repository ships only code and the split metadata; you
+> must obtain the images yourself.
+
+- **GMDB** — frequent (seen) and rare (unseen) splits, resolved from the official GMDB metadata
+  CSVs (`gmdb_metadata/`). Aligned 112×112 face crops.
+- **MediaPipe landmarks** — one `<id>_aligned_landmarks.txt` per image (478 points), used for
+  region-masked pooling and the localization loss. Generate crops + landmarks with
+  `crop_align.py` (RetinaFace detector → ArcFace 5-point alignment).
+- **Normal-face datasets** (for the screening experiment) — CASIA-WebFace and UTKFace, aligned
+  the same way.
+
+### Generating landmarks
+
+`util/mediapipe_pixle_generator.py` produces the per-image landmark files with **MediaPipe Face
+Mesh** (`refine_landmarks=True` → 478 points). For every image it writes a
+`<name>_landmarks.txt` whose lines are `index,pixel_x,pixel_y` (the format `util/data.py`
+expects, normalized by `--landmark_img_size` at load time), plus an optional annotated preview.
+
+```bash
+pip install opencv-python mediapipe
+# set IMAGE_DIR / LANDMARK_SAVE_DIR at the top of the script, then:
+python util/mediapipe_pixle_generator.py
 ```
-@article{nauta2023pipnet,
-  title={PIP-Net: Patch-Based Intuitive Prototypes for Interpretable Image Classification},
-  author={Nauta, Meike and Schlötterer, Jörg and van Keulen, Maurice and Seifert, Christin},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
-  year={2023},
-}
+
+Run it on the **aligned** crops so the landmark coordinates match the images fed to the model.
+
+## Training
+
+Two stages: self-supervised prototype pretraining, then classification.
+
+```bash
+python main.py --dataset gmdb \
+  --net convnext_tiny_26 --image_size 112 \
+  --masked_pool --mask_radius 0.1 \
+  --batch_size 64 --epochs_pretrain 5 --epochs 80 \
+  --log_dir ./runs/protogestalt
 ```
 
+Useful flags:
 
+| flag | purpose |
+|---|---|
+| `--masked_pool` / `--mask_radius` | region-masked pooling and its region-disk radius |
+| `--loc_loss` / `--loc_weight` / `--loc_temp` | prototype-localization loss |
+| `--net` | backbone: `convnext_tiny_26/13`, `resnet18/34/50/101/152`, `iresnet100`, `iresnet100_arcgmdb` |
+| `--num_features` | number of prototypes (set >0 for ArcFace backbones; adds a 1×1 add-on conv) |
+| `--pretrain_data_dir` / `--pretrain_landmarks_dir` | CASIA (or other) corpus for Stage-1 prototype pretraining |
+| `--weighted_loss` | class-balanced loss (recommended for the imbalanced binary task) |
+| `--gallery_validation` | run GestaltMatcher retrieval on the trained model in-process |
+| `--post_validation gallery,binary,syndrome` | run the standalone eval scripts after training |
 
+Checkpoints and logs are written to `--log_dir` (`checkpoints/net_trained`, `metadata/args.pickle`,
+`out.txt`, `tqdm.txt`, prototype visualizations).
+
+## Evaluation & interpretability
+
+All scripts load a finished run via `--model_dir <log_dir>` (which must contain
+`metadata/args.pickle` and `checkpoints/net_trained`).
+
+| script | what it does |
+|---|---|
+| `gallery_validation.py` | GestaltMatcher retrieval (kNN / nearest-class-mean) top-k on GMDB-frequent (single split) and GMDB-rare (10-fold CV). Options: TTA, CSLS hubness correction, class-aggregation, a supervised-contrastive projection head, and comparison against external (Hustinx 2023) embeddings. |
+| `syndrome_prediction.py` | Uses the trained **classifier head** for frequent (seen) syndromes and **retrieval** for rare (unseen) — the right tool per split. Reports top-1/5/10. |
+| `binary_validation.py` | Syndromic-vs-normal screening: a logistic probe on prototype vectors (GMDB positives vs CASIA/UTKFace normals), with test-prevalence sweeps and a **dataset-identity confound probe**. |
+| `explain_prediction.py` | Local explanation for one image: the top prototypes driving the prediction, their contribution (presence × class weight), patches, regions, and heatmaps. |
+| `prototype_consistency.py` | Do the same prototypes drive a syndrome across patients? Per-patient decision/activation signatures and their overlap. |
+| `prototype_purity.py` | Top-K exemplar **region purity** of prototypes, comparing region-masked vs vanilla models against a region-prevalence null. |
+| `convert_arcgmdb_backbone.py` | One-time converter that turns a GMDB-adapted ArcFace ONNX/`.pth` into a `--net iresnet100_arcgmdb` backbone. |
+
+Example:
+
+```bash
+python gallery_validation.py   --model_dir ./runs/protogestalt --tta hflip --class_aggregate mean
+python syndrome_prediction.py  --model_dir ./runs/protogestalt
+python explain_prediction.py   --model_dir ./runs/protogestalt --image path/to/face.jpg --topk 6
+```
+
+<p align="center">
+  <img src="images/explanation_cornelia_de_lange_02.png" width="900"><br>
+  <em><b>Local explanation (<code>explain_prediction.py</code>).</b> For a case predicted as
+  Cornelia de Lange syndrome, the top-6 prototypes driving the decision are shown with their
+  contribution (presence × class weight); each patch marks where the prototype activates most
+  strongly on this image (boxed on the face), and the bar chart ranks the contributions. The
+  evidence concentrates on the eyebrows, eyes, and nose — features clinically relevant to
+  Cornelia de Lange syndrome.</em>
+</p>
+
+## Repository layout
+
+```
+main.py                     training pipeline (2-stage) + post-training validation hooks
+pipnet/                     core PIP-Net: model (pipnet.py), losses & training (train.py), eval (test.py)
+features/                   backbones (ResNet, ConvNeXt, IResNet/ArcFace, ArcFace-GMDB)
+util/                       data loading, args, visualization, landmark generation (mediapipe_pixle_generator.py)
+gmdb_common.py              shared GMDB+PIP-Net helpers (model loading, embedding) used by all eval scripts
+gallery_validation.py       GestaltMatcher retrieval evaluation
+syndrome_prediction.py      classifier (frequent) + retrieval (rare)
+binary_validation.py        syndromic-vs-normal screening + confound probes
+explain_prediction.py       single-image prototype explanation
+prototype_consistency.py    cross-patient prototype consistency
+prototype_purity.py         region purity (masked vs vanilla)
+crop_align.py               face detection + alignment (RetinaFace -> ArcFace template)
+tune.py                     Optuna hyperparameter search
+```
+
+## Acknowledgements
+
+Built on **PIP-Net** — M. Nauta, J. Schlötterer, M. van Keulen, C. Seifert,
+*"PIP-Net: Patch-Based Intuitive Prototypes for Interpretable Image Classification"*, CVPR 2023
+([code](https://github.com/M-Nauta/PIPNet)). Evaluation follows the **GestaltMatcher** protocol
+(Hsieh *et al.* 2022; Hustinx *et al.* 2023) on the **GestaltMatcher Database (GMDB)**.

@@ -12,7 +12,7 @@ model_urls = {
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
 
-model_dir = './pretrained_models'
+model_dir = '/data2/masino_lab/abamini/models'
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -279,9 +279,10 @@ def resnet50_features_inat(pretrained=False, **kwargs):
     if pretrained:
         #use BBN pretrained weights of the conventional learning branch (from BBN.iNaturalist2017.res50.180epoch.best_model.pth)
         #https://openaccess.thecvf.com/content_CVPR_2020/papers/Zhou_BBN_Bilateral-Branch_Network_With_Cumulative_Learning_for_Long-Tailed_Visual_Recognition_CVPR_2020_paper.pdf
-        if not os.path.exists(os.path.join(os.path.join('features', 'state_dicts'), 'BBN.iNaturalist2017.res50.180epoch.best_model.pth')):
-            print("To use Resnet50 pretrained on iNaturalist, create a folder called state_dicts in the folder features, and download BBN.iNaturalist2017.res50.180epoch.best_model.pth to there from https://drive.google.com/drive/folders/1yHme1iFQy-Lz_11yZJPlNd9bO_YPKlEU.", flush=True)
-        model_dict = torch.load(os.path.join(os.path.join('features', 'state_dicts'), 'BBN.iNaturalist2017.res50.180epoch.best_model.pth'))
+        inat_path = os.path.join(model_dir, 'BBN.iNaturalist2017.res50.180epoch.best_model.pth')
+        if not os.path.exists(inat_path):
+            print(f"To use Resnet50 pretrained on iNaturalist, download BBN.iNaturalist2017.res50.180epoch.best_model.pth to {model_dir} from https://drive.google.com/drive/folders/1yHme1iFQy-Lz_11yZJPlNd9bO_YPKlEU.", flush=True)
+        model_dict = torch.load(inat_path)
         # rename last residual block from cb_block to layer4.2
         new_model = copy.deepcopy(model_dict)
         for k in model_dict.keys():

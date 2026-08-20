@@ -10,8 +10,37 @@ import torchvision
 from util.func import get_patch_size
 import random
 
-@torch.no_grad()                    
-def visualize_topk(net, projectloader, num_classes, device, foldername, args: argparse.Namespace, k=10):
+
+def get_proto_region_names(net):
+    """Map each prototype index to its facial-region name when the model uses
+    region-masked pooling (MaskedMaxPool), else return None.
+
+    Lets the prototype visualisations be annotated with the REGION_LANDMARKS region
+    a prototype is confined to (e.g. "left_eye"), not just its index."""
+    from pipnet.pipnet import MaskedMaxPool
+    from pipnet.train import REGION_LANDMARKS
+    pool = net.module._pool
+    if isinstance(pool, MaskedMaxPool):
+        names = list(REGION_LANDMARKS.keys())
+        return {p: names[r] for p, r in enumerate(pool.proto2region.tolist())}
+    return None
+
+
+def proto_label(region_names, p):
+    """Filename/label-safe token for prototype p, with its region appended when
+    available, e.g. "5_left_eye" (region-masked pooling) or "5" (global pooling)."""
+    if region_names is not None and p in region_names:
+        return "%s_%s" % (str(p), region_names[p])
+    return str(p)
+
+
+@torch.no_grad()
+def visualize_topk(net, projectloader, num_classes, device, foldername, args: argparse.Namespace, k=10, topk_only=False):
+    """Compute top-k prototype scores over the project set and optionally save patch images.
+
+    When ``topk_only=True`` only the scoring pass is run (no image files written),
+    which is ~2× faster and sufficient for zeroing out unused prototypes during tuning.
+    """
     print("Visualizing prototypes for topk...", flush=True)
     dir = os.path.join(args.log_dir, foldername)
     if not os.path.exists(dir):
@@ -90,6 +119,11 @@ def visualize_topk(net, projectloader, num_classes, device, foldername, args: ar
             prototypes_not_used.append(p)
 
     print(len(prototypes_not_used), "prototypes do not have any similarity score > 0.1. Will be ignored in visualisation.")
+
+    if topk_only:
+        # Caller only needs scores, not images — skip the expensive image-saving pass.
+        return topks
+
     abstained = 0
     # Show progress on progress bar
     img_iter = tqdm(enumerate(projectloader),
@@ -135,11 +169,15 @@ def visualize_topk(net, projectloader, num_classes, device, foldername, args: ar
                                 tensors_per_prototype[p].append(img_tensor_patch)
 
     print("Abstained: ", abstained, flush=True)
+    region_names = get_proto_region_names(net)
     all_tensors = []
     for p in range(net.module._num_prototypes):
         if saved[p]>0:
             # add text next to each topk-grid, to easily see which prototype it is
+            # (and, with region-masked pooling, which facial region it belongs to)
             text = "P "+str(p)
+            if region_names is not None and p in region_names:
+                text += "\n"+region_names[p]
             txtimage = Image.new("RGB", (img_tensor_patch.shape[1],img_tensor_patch.shape[2]), (0, 0, 0))
             draw = D.Draw(txtimage)
             draw.text((img_tensor_patch.shape[0]//2, img_tensor_patch.shape[1]//2), text, anchor='mm', fill="white")
@@ -148,7 +186,7 @@ def visualize_topk(net, projectloader, num_classes, device, foldername, args: ar
             # save top-k image patches in grid
             try:
                 grid = torchvision.utils.make_grid(tensors_per_prototype[p], nrow=k+1, padding=1)
-                torchvision.utils.save_image(grid,os.path.join(dir,"grid_topk_%s.png"%(str(p))))
+                torchvision.utils.save_image(grid,os.path.join(dir,"grid_topk_%s.png"%(proto_label(region_names, p))))
                 if saved[p]>=k:
                     all_tensors+=tensors_per_prototype[p]
             except:
@@ -166,6 +204,8 @@ def visualize(net, projectloader, num_classes, device, foldername, args: argpars
     dir = os.path.join(args.log_dir, foldername)
     if not os.path.exists(dir):
         os.makedirs(dir)
+
+    region_names = get_proto_region_names(net)
 
     near_imgs_dirs = dict()
     seen_max = dict()
@@ -252,12 +292,12 @@ def visualize(net, projectloader, num_classes, device, foldername, args: argpars
                     saved[p]+=1
                     tensors_per_prototype[p].append((img_tensor_patch, found_max))
                     
-                    save_path = os.path.join(dir, "prototype_%s")%str(p)
+                    save_path = os.path.join(dir, "prototype_%s")%proto_label(region_names, p)
                     if not os.path.exists(save_path):
                         os.makedirs(save_path)
                     draw = D.Draw(image)
                     draw.rectangle([(w_coor_min,h_coor_min), (w_coor_max, h_coor_max)], outline='yellow', width=2)
-                    image.save(os.path.join(save_path, 'p%s_%s_%s_%s_rect.png'%(str(p),str(imglabel),str(round(found_max, 2)),str(img_to_open.split('/')[-1].split('.jpg')[0]))))
+                    image.save(os.path.join(save_path, 'p%s_%s_%s_%s_rect.png'%(proto_label(region_names, p),str(imglabel),str(round(found_max, 2)),str(img_to_open.split('/')[-1].split('.jpg')[0]))))
                     
         
         images_seen_before+=len(ys)
@@ -270,7 +310,7 @@ def visualize(net, projectloader, num_classes, device, foldername, args: argpars
                 sorted_by_second = sorted(tensors_per_prototype[p], key=lambda tup: tup[1], reverse=True)
                 sorted_ps = [i[0] for i in sorted_by_second]
                 grid = torchvision.utils.make_grid(sorted_ps, nrow=16, padding=1)
-                torchvision.utils.save_image(grid,os.path.join(dir,"grid_%s.png"%(str(p))))
+                torchvision.utils.save_image(grid,os.path.join(dir,"grid_%s.png"%(proto_label(region_names, p))))
             except RuntimeError:
                 pass
 

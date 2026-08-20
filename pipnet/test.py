@@ -27,6 +27,7 @@ def eval_pipnet(net,
 
     global_top1acc = 0.
     global_top5acc = 0.
+    global_top10acc = 0.
     global_sim_anz = 0.
     global_anz = 0.
     local_size_total = 0.
@@ -74,10 +75,11 @@ def eval_pipnet(net,
                 f'SimANZCC: {correct_class_sim_scores_anz.mean().item():.2f}, ANZ: {almost_nz.mean().item():.1f}, LocS: {local_size.mean().item():.1f}, Acc: {acc:.3f}', refresh=False
             )    
 
-            (top1accs, top5accs) = topk_accuracy(out, ys, topk=[1,5])
-            
+            (top1accs, top5accs, top10accs) = topk_accuracy(out, ys, topk=[1,5,10])
+
             global_top1acc+=torch.sum(top1accs).item()
             global_top5acc+=torch.sum(top5accs).item()
+            global_top10acc+=torch.sum(top10accs).item()
             y_preds += ys_pred_scores.detach().tolist()
             y_trues += ys.detach().tolist()
             y_preds_classes += ys_pred.detach().tolist()
@@ -93,6 +95,10 @@ def eval_pipnet(net,
     info['test_accuracy'] = acc_from_cm(cm)
     info['top1_accuracy'] = global_top1acc/len(test_loader.dataset)
     info['top5_accuracy'] = global_top5acc/len(test_loader.dataset)
+    info['top10_accuracy'] = global_top10acc/len(test_loader.dataset)
+    info['y_trues'] = y_trues
+    info['y_preds_classes'] = y_preds_classes
+    info['y_preds_scores'] = y_preds
     info['almost_sim_nonzeros'] = global_sim_anz/len(test_loader.dataset)
     info['local_size_all_classes'] = local_size_total / len(test_loader.dataset)
     info['almost_nonzeros'] = global_anz/len(test_loader.dataset)
